@@ -63,26 +63,34 @@
 	<point_size>2</point_size> <!-- optional int, default 2 -->
 	<linewidth>1.5</linewidth> <!-- optional float, default 1.5 -->
 	<!--<format>.1e</format>-->
+	<data_reduction>
+	  <time>3600</time>
+	  <absolute>0.01</absolute>
+	</data_reduction>
 	<figure>
 	  <plot0>
             <color>#00FF00</color>
             <data_channel>CINF-H2O2-PROA1:A1_voltage_setpoint</data_channel>
             <label>Voltage Setpoint / V</label>
+	    <old_data_query>select x, y from xy_values_proactive where measurement=(select id from measurements_proactive where power_supply_channel="A1" and label="voltage_setpoint" order by time desc limit 1) order by id</old_data_query>
 	  </plot0>
 	  <plot1>
             <color>#0000FF</color>
             <data_channel>CINF-H2O2-PROA1:A1_voltage</data_channel>
             <label>Voltage / V</label>
+	    <old_data_query>select x, y from xy_values_proactive where measurement=(select id from measurements_proactive where power_supply_channel="A1" and label="voltage" order by time desc limit 1) order by id</old_data_query>
 	  </plot1>
 	  <plot2>
             <color>#FF0000</color>
             <data_channel>CINF-H2O2-PROA1:A1_current</data_channel>
             <label>Current / A</label>
+	    <old_data_query>select x, y from xy_values_proactive where measurement=(select id from measurements_proactive where power_supply_channel="A1" and label="current" order by time desc limit 1) order by id</old_data_query>
 	  </plot2>
 	  <plot3>
             <color>#000000</color>
             <data_channel>CINF-H2O2-PROA1:A1_current_limit</data_channel>
             <label>Current Limit / A</label>
+	    <old_data_query>select x, y from xy_values_proactive where measurement=(select id from measurements_proactive where power_supply_channel="A1" and label="current_limit" order by time desc limit 1) order by id</old_data_query>
 	  </plot3>
 	</figure>
       </container0>

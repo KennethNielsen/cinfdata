@@ -245,6 +245,11 @@ function MyFigure(name, definition) {
             query = query.replace("{from}", Math.floor(this.x_start.getTime() / 1000));
             old_data = JSON.parse(js_query(query));
 
+
+	    if (this.type === "xy_figure"){
+		old_data = this.quick_reduce(old_data);
+	    }
+
             for (i = 0; i < old_data.length; i+=1) {
                 new_point = this.data_template.slice(0);
                 new_point[0] = new Date(old_data[i][0] * 1000);
@@ -260,9 +265,9 @@ function MyFigure(name, definition) {
     // Put dummy point in array if there are none, to make dygraphs happy
     if (this.data.length === 0) {
         this.data.push(this.dummy_point);
-        this.first_call = true;  // Used to replace the default point on first call
+        this.has_dummy_point = true;  // Used to replace the default point on first call
     } else {
-        this.first_call = false;
+        this.has_dummy_point = false;
     }
 
     this.log("Initial data: %o", this.data[0].slice(0));
@@ -353,7 +358,7 @@ MyFigure.prototype.addBatch = function (data_batch){
         value = data_batch[key];
         if (value === 'RESET'){
             this.data = [this.dummy_point];
-            this.first_call = true;
+            this.has_dummy_point = true;
         } else {
             plots = this.plot_map[key];
             if (plots !== undefined){
@@ -386,29 +391,51 @@ MyFigure.prototype.addXYPoint = function (plot_n, x, y){
     debug_counter['add_xy_point'] += 1;
 
     // Define variables
-    var new_point = this.data_template.slice(0);
+    var new_point = this.data_template.slice(0), last_index;
     new_point[0] = x;
     new_point[plot_n + 1] = y;
 
     // If it is the first call to draw, replace the dummy point and redraw
-    if (this.first_call) {
+    if (this.has_dummy_point) {
         this.data = [];
     }
 
     // Push point
-    this.data.push(new_point);
+    if (this.data_reduction === null) {  // No data reduction
+        this.data.push(new_point);
+    } else {
+        // Data reduction
+        if (this.new_temporary_point[plot_n]) {
+            this.data.push(new_point);
+            this.last_point_index[plot_n] = this.data.length - 1;
+            this.new_temporary_point[plot_n] = false;
+        }
+
+        last_index = this.last_point_index[plot_n];
+        this.data[last_index] = new_point;
+        if (this.time_to_add_xy(plot_n, x, y)) {
+            this.last_permanent_point_time[plot_n] = x;
+            this.last_permanent_point_value[plot_n] = y;
+            this.new_temporary_point[plot_n] = true;
+        }
+    }
 
     // Update on first call
-    if (this.first_call) {
+    if (this.has_dummy_point) {
 	debug['other_update'] += 1;
         this.fig.updateOptions({'file':  this.data});
-        this.first_call = false;
+        this.has_dummy_point = false;
     }
 };
 
 // Function attached to MyFigure prototype, so something like a virtual method
 MyFigure.prototype.addDatePoint = function (plot_n, date, value) {
-    /* Adds a point to the figure */
+    /* Adds a point to the figure
+
+     plot_n (int)
+     date (float, unix time)
+     value (float)
+    */
     "use strict";
 
     debug_counter['add_date_point'] += 1;
@@ -421,7 +448,7 @@ MyFigure.prototype.addDatePoint = function (plot_n, date, value) {
     new_point[plot_n + 1] = value;
 
     // If it is the first call to draw, replace the dummy point and redraw
-    if (this.first_call) {
+    if (this.has_dummy_point) {
         this.data = [];
     }
 
@@ -444,10 +471,10 @@ MyFigure.prototype.addDatePoint = function (plot_n, date, value) {
         }
     }
 
-    if (this.first_call) {
+    if (this.has_dummy_point) {
 	debug['other_update'] += 1;
         this.fig.updateOptions({'file':  this.data});
-        this.first_call = false;
+        this.has_dummy_point = false;
     }
 
     // If the new points is outside the plot window
@@ -538,6 +565,49 @@ MyFigure.prototype.time_to_add = function (plot_n, date, value) {
 };
 
 // Function attached to MyFigure prototype, so something like a virtual method
+MyFigure.prototype.time_to_add_xy = function (plot_n, x, y) {
+    /* Determines if it is time to add, if using data reduction */
+    "use strict";
+    var last_time, last_y, ratio;
+
+    // Check time
+    if (this.data_reduction.hasOwnProperty("time")) {
+        last_time = this.last_permanent_point_time[plot_n];
+	this.log("time_to_add_xy");
+        if (x - last_time > this.data_reduction.time) {
+            //this.log("Check time true");
+            return true;
+        }
+    }
+
+    // Check absolute
+    if (this.data_reduction.hasOwnProperty("absolute")) {
+        last_y = this.last_permanent_point_value[plot_n];
+        //this.log("Check absolute: " + Math.abs(value - last_value));
+        if (Math.abs(y - last_y) > this.data_reduction.absolute) {
+            //this.log("Check absolute true");
+            return true;
+        }
+    }
+
+    // Check relative
+    if (this.data_reduction.hasOwnProperty("relative")) {
+        last_y = this.last_permanent_point_value[plot_n];
+        /* In Javascript you are allowed to divide by 0 !!!! Becomes Infinity
+           which can be used for numerical comparisons */
+        ratio = last_y / y;
+        //this.log("Check relative: " + ratio);
+        if (ratio < 1 - this.data_reduction.relative ||
+            1 + this.data_reduction.relative < ratio) {
+            //this.log("Check relative true");
+            return true;
+        }
+    }
+
+    return false;
+};
+
+// Function attached to MyFigure prototype, so something like a virtual method
 MyFigure.prototype.log = function (string, args) {
     /* Logs to console with figure name prefixed */
     "use strict";
@@ -549,14 +619,51 @@ MyFigure.prototype.sort = function () {
     /* Sort the data array according to date at index 0 in the rows */
     "use strict";
 
+    console.log(this.type);
     debug_counter['sort'] += 1;
 
-    this.data.sort(function (a, b) {
-        // Compare the 2 dates
-        if (a[0].getTime() < b[0].getTime()) {return -1; }
-        if (a[0].getTime() > b[0].getTime()) {return 1; }
-        return 0;
-    });
+    if (this.type === "xy_figure"){
+	this.data.sort(function (a, b) {
+            // Compare the 2 dates
+            if (a[0] < b[0]) {return -1; }
+            if (a[0] > b[0]) {return 1; }
+            return 0;
+	});
+    } else {
+	this.data.sort(function (a, b) {
+            // Compare the 2 dates
+            if (a[0].getTime() < b[0].getTime()) {return -1; }
+            if (a[0].getTime() > b[0].getTime()) {return 1; }
+            return 0;
+	});
+    }
+};
+
+// Function attached to MyFigure prototype, so something like a virtual method
+MyFigure.prototype.quick_reduce = function (old_data) {
+    /* Sort the data array according to date at index 0 in the rows */
+    "use strict";
+
+    var t0 = performance.now();
+    var i;
+    var reduced_old_data = [];
+    var last_value = Infinity;
+
+    if (old_data.length < 10){
+	return old_data;
+    }
+
+    for (i = 0; i < old_data.length - 1; i+=1) {
+	if (Math.abs(old_data[i][1] - last_value) > this.data_reduction.absolute){
+	    last_value = old_data[i][1];
+	    reduced_old_data.push(old_data[i]);
+	}
+    }
+    reduced_old_data.push(old_data[old_data.length - 1]);
+
+    var t1 = performance.now();
+    console.log("%%%%%%%%%%%%%%% Call to doSomething took " + (t1 - t0) + " milliseconds.")
+    return reduced_old_data;
 };
 
 // ### Functions used by the websocket callbacks
